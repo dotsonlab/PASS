@@ -20,8 +20,8 @@ uint32_t syncTime = 0; // time of last sync()
 #define WAIT_TO_START    0 // Wait for serial input in setup()
 
 // the digital pins that connect to the LEDs
-#define redLEDpin 2
-#define greenLEDpin 3
+#define redLEDpin 4 //optional LED spot L1  --- not wired
+#define greenLEDpin 5 //optional LED spot L2 --- not wired
 
 // The analog pins that connect to the sensors
 #define usAnalog 0           // analog 0
