@@ -175,28 +175,23 @@ void loop(void)
   Serial.print('"');
 #endif //ECHO_TO_SERIAL
 
-  analogRead(photocellPin);
+  analogRead(usAnalog);
   delay(10); 
-  int photocellReading = analogRead(photocellPin);  
+  int usAnalogReading = analogRead(usAnalog);  
   
-  analogRead(tempPin); 
+  analogRead(currentAnalog); 
   delay(10);
-  int tempReading = analogRead(tempPin);    
-  
-  // converting that reading to voltage, for 3.3v arduino use 3.3, for 5.0, use 5.0
-  float voltage = tempReading * aref_voltage / 1024;  
-  float temperatureC = (voltage - 0.5) * 100 ;
-  float temperatureF = (temperatureC * 9 / 5) + 32;
+  int currentAnalogReading = analogRead(currentAnalog);    
   
   logfile.print(", ");    
-  logfile.print(photocellReading);
+  logfile.print(usAnalogReading);
   logfile.print(", ");    
-  logfile.print(temperatureF);
+  logfile.print(currentAnalogReading);
 #if ECHO_TO_SERIAL
   Serial.print(", ");   
-  Serial.print(photocellReading);
+  Serial.print(usAnalogReading);
   Serial.print(", ");    
-  Serial.print(temperatureF);
+  Serial.print(currentAnalogReading);
 #endif //ECHO_TO_SERIAL
 
   // Log the estimated 'VCC' voltage by measuring the internal 1.1v ref
@@ -230,4 +225,3 @@ void loop(void)
   digitalWrite(redLEDpin, LOW);
   
 }
-
