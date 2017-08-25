@@ -40,6 +40,20 @@ SoftwareSerial myserial(rx, tx); //define how the soft serial port is going to w
 
 RTC_PCF8523 RTC; // define the Real Time Clock object
 
+char flow_data[48];                //we make a 48 byte character array to hold incoming data from the Flow Meter Totalizer. 
+char computerdata[20];             //we make a 20 byte character array to hold incoming data from a pc/mac/other. 
+byte received_from_computer=0;     //we need to know how many characters have been received.                                 
+byte received_from_sensor=0;       //we need to know how many characters have been received.
+byte string_received=0;            //used to identify when we have received a string from the Flow Meter Totalizer.
+
+
+float total_flow=0;                //used to hold a floating point number that is the total volume flow.
+float flow_per_time;               //used to hold a floating point number that is the flow rate per X time [hour, min, sec]
+
+
+char *total;                       //char pointer used in string parsing 
+char *FPT;                         //char pointer used in string parsing [FPT= flow per time]
+
 // for the data logging shield, we use digital pin 10 for the SD cs line
 const int chipSelect = 10;
 
@@ -60,6 +74,7 @@ void error(char *str)
 void setup(void)
 {
   Serial.begin(9600);
+  myserial.begin(9600);        //enable the software serial port
   Serial.println();
   
   // use debugging LEDs
@@ -112,9 +127,9 @@ void setup(void)
   }
   
 
-  logfile.println("millis,stamp,datetime,light,temp,vcc");    
+  logfile.println("unixtime,total,us,current,voltage,vcc");    
 #if ECHO_TO_SERIAL
-  Serial.println("millis,stamp,datetime,light,temp,vcc");
+  Serial.println("unixtime,total,us,current,voltage,vcc");
 #endif //ECHO_TO_SERIAL
  
   // If you want to set the aref to something other than 5v
@@ -129,69 +144,64 @@ void loop(void)
   delay((LOG_INTERVAL -1) - (millis() % LOG_INTERVAL));
   
   digitalWrite(greenLEDpin, HIGH);
-  
-  // log milliseconds since starting
-  uint32_t m = millis();
-  logfile.print(m);           // milliseconds since start
-  logfile.print(", ");    
-#if ECHO_TO_SERIAL
-  Serial.print(m);         // milliseconds since start
-  Serial.print(", ");  
-#endif
 
   // fetch the time
   now = RTC.now();
   // log time
   logfile.print(now.unixtime()); // seconds since 1/1/1970
   logfile.print(", ");
-  logfile.print('"');
-  logfile.print(now.year(), DEC);
-  logfile.print("/");
-  logfile.print(now.month(), DEC);
-  logfile.print("/");
-  logfile.print(now.day(), DEC);
-  logfile.print(" ");
-  logfile.print(now.hour(), DEC);
-  logfile.print(":");
-  logfile.print(now.minute(), DEC);
-  logfile.print(":");
-  logfile.print(now.second(), DEC);
-  logfile.print('"');
+
 #if ECHO_TO_SERIAL
   Serial.print(now.unixtime()); // seconds since 1/1/1970
   Serial.print(", ");
-  Serial.print('"');
-  Serial.print(now.year(), DEC);
-  Serial.print("/");
-  Serial.print(now.month(), DEC);
-  Serial.print("/");
-  Serial.print(now.day(), DEC);
-  Serial.print(" ");
-  Serial.print(now.hour(), DEC);
-  Serial.print(":");
-  Serial.print(now.minute(), DEC);
-  Serial.print(":");
-  Serial.print(now.second(), DEC);
-  Serial.print('"');
-#endif //ECHO_TO_SERIAL
 
-  analogRead(usAnalog);
-  delay(10); 
-  int usAnalogReading = analogRead(usAnalog);  
+#endif //ECHO_TO_SERIAL
   
+  //read every second and average over minute
   analogRead(currentAnalog); 
   delay(10);
   int currentAnalogReading = analogRead(currentAnalog);    
+
+  //read every second and average over minute
+  analogRead(voltageAnalog); 
+  delay(10);
+  int voltageAnalogReading = analogRead(voltageAnalog); 
+
+  //read once per minute
+  analogRead(usAnalog);
+  delay(10); 
+  int usAnalogReading = analogRead(usAnalog);  
+
+  myserial.print("R");           //we transmit the data received from the serial monitor(pc/mac/other) through the soft serial port to the Flow Meter Totalizer. 
+  myserial.print('\r');                   //all data sent to the Flow Meter Totalizer must end with a <CR>.
+
+  if(myserial.available() > 0){        //if we see that the Flow Meter Totalizer has sent a character.
+     received_from_sensor=myserial.readBytesUntil(13,flow_data,48); //we read the data sent from Flow Meter Totalizer until we see a <CR>. We also count how many character have been received.  
+     flow_data[received_from_sensor]=0;  //we add a 0 to the spot in the array just after the last character we received. This will stop us from transmitting incorrect data that may have been left in the buffer. 
+     
+     if((flow_data[0] >= 48) && (flow_data[0] <=57)){   //if flow_data[0] is a digit and not a letter
+        pars_data();
+        }
+     //else
+     //Serial.println(flow_data);            //if the data from the Flow Meter Totalizer does not start with a number transmit that data to the serial monitor.
+   }    
   
-  logfile.print(", ");    
+    
+  logfile.print(total);
+  logfile.print(", ");
   logfile.print(usAnalogReading);
   logfile.print(", ");    
   logfile.print(currentAnalogReading);
+  logfile.print(", ");    
+  logfile.print(voltageAnalogReading);
 #if ECHO_TO_SERIAL
-  Serial.print(", ");   
+  Serial.print(total);
+  Serial.print(", ");
   Serial.print(usAnalogReading);
   Serial.print(", ");    
   Serial.print(currentAnalogReading);
+  Serial.print(", ");    
+  Serial.print(voltageAnalogReading);
 #endif //ECHO_TO_SERIAL
 
   // Log the estimated 'VCC' voltage by measuring the internal 1.1v ref
@@ -225,3 +235,18 @@ void loop(void)
   digitalWrite(redLEDpin, LOW);
   
 }
+
+  void pars_data(){
+
+        total=strtok(flow_data, ",");           //let's parse the string at each comma.
+        //FPT=strtok(NULL, ",");                  //let's parse the string at each comma.
+        
+
+        //Serial.print("total_flow=");           //We now print each value we parsed separately. 
+        //Serial.println(total);                 //this is the total_flow. 
+     
+        //Serial.print("FPT=");                  //We now print each value we parsed separately. 
+        //Serial.println(FPT);                   //this is the the flow rate per X time.
+     
+        //Serial.println();                      //this just makes the output easier to read. 
+        }
