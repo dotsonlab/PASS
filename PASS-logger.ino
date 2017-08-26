@@ -7,13 +7,13 @@
 // A simple data logger for the Arduino analog pins
 
 // how many milliseconds between grabbing data and logging it. 1000 ms is once a second
-#define LOG_INTERVAL  1000 // mills between entries (reduce to take more/faster data)
+#define LOG_INTERVAL  5000 // mills between entries (reduce to take more/faster data)
 
 // how many milliseconds before writing the logged data permanently to disk
 // set it to the LOG_INTERVAL to write each time (safest)
 // set it to 10*LOG_INTERVAL to write all data every 10 datareads, you could lose up to 
 // the last 10 reads if power is lost but it uses less power and is much faster!
-#define SYNC_INTERVAL 1000 // mills between calls to flush() - to write data to the card
+#define SYNC_INTERVAL 5000 // mills between calls to flush() - to write data to the card
 uint32_t syncTime = 0; // time of last sync()
 
 #define ECHO_TO_SERIAL   1 // echo data to serial port
@@ -33,26 +33,15 @@ uint32_t syncTime = 0; // time of last sync()
 #define tx 3                     //define what pin tx is going to be.
 SoftwareSerial myserial(rx, tx); //define how the soft serial port is going to work. 
 
-#define BANDGAPREF 14            // special indicator that we want to measure the bandgap
-
-#define aref_voltage 3.3         // we tie 3.3V to ARef and measure it with a multimeter!
-#define bandgap_voltage 1.1      // this is not super guaranteed but its not -too- off
-
 RTC_PCF8523 RTC; // define the Real Time Clock object
 
-char flow_data[48];                //we make a 48 byte character array to hold incoming data from the Flow Meter Totalizer. 
-char computerdata[20];             //we make a 20 byte character array to hold incoming data from a pc/mac/other. 
+char sensordata[30];                //we make a 48 byte character array to hold incoming data from the Flow Meter Totalizer.  
+char sensordatajunk[30];
 byte received_from_computer=0;     //we need to know how many characters have been received.                                 
-byte received_from_sensor=0;       //we need to know how many characters have been received.
+byte sensor_bytes_received=0;       //we need to know how many characters have been received.
 byte string_received=0;            //used to identify when we have received a string from the Flow Meter Totalizer.
-
-
-float total_flow=0;                //used to hold a floating point number that is the total volume flow.
-float flow_per_time;               //used to hold a floating point number that is the flow rate per X time [hour, min, sec]
-
-
-char *total;                       //char pointer used in string parsing 
-char *FPT;                         //char pointer used in string parsing [FPT= flow per time]
+float f;
+char *flotot;
 
 // for the data logging shield, we use digital pin 10 for the SD cs line
 const int chipSelect = 10;
@@ -127,9 +116,9 @@ void setup(void)
   }
   
 
-  logfile.println("unixtime,total,us,current,voltage,vcc");    
+  logfile.println("unixtime,total,us,current,voltage");    
 #if ECHO_TO_SERIAL
-  Serial.println("unixtime,total,us,current,voltage,vcc");
+  Serial.println("unixtime,total,us,current,voltage");
 #endif //ECHO_TO_SERIAL
  
   // If you want to set the aref to something other than 5v
@@ -172,22 +161,10 @@ void loop(void)
   delay(10); 
   int usAnalogReading = analogRead(usAnalog);  
 
-  myserial.print("R");           //we transmit the data received from the serial monitor(pc/mac/other) through the soft serial port to the Flow Meter Totalizer. 
-  myserial.print('\r');                   //all data sent to the Flow Meter Totalizer must end with a <CR>.
-
-  if(myserial.available() > 0){        //if we see that the Flow Meter Totalizer has sent a character.
-     received_from_sensor=myserial.readBytesUntil(13,flow_data,48); //we read the data sent from Flow Meter Totalizer until we see a <CR>. We also count how many character have been received.  
-     flow_data[received_from_sensor]=0;  //we add a 0 to the spot in the array just after the last character we received. This will stop us from transmitting incorrect data that may have been left in the buffer. 
-     
-     if((flow_data[0] >= 48) && (flow_data[0] <=57)){   //if flow_data[0] is a digit and not a letter
-        pars_data();
-        }
-     //else
-     //Serial.println(flow_data);            //if the data from the Flow Meter Totalizer does not start with a number transmit that data to the serial monitor.
-   }    
-  
+  flow();
+  delay(100);
     
-  logfile.print(total);
+  logfile.print(f);
   logfile.print(", ");
   logfile.print(usAnalogReading);
   logfile.print(", ");    
@@ -195,7 +172,7 @@ void loop(void)
   logfile.print(", ");    
   logfile.print(voltageAnalogReading);
 #if ECHO_TO_SERIAL
-  Serial.print(total);
+  Serial.print(f);
   Serial.print(", ");
   Serial.print(usAnalogReading);
   Serial.print(", ");    
@@ -203,19 +180,6 @@ void loop(void)
   Serial.print(", ");    
   Serial.print(voltageAnalogReading);
 #endif //ECHO_TO_SERIAL
-
-  // Log the estimated 'VCC' voltage by measuring the internal 1.1v ref
-  analogRead(BANDGAPREF); 
-  delay(10);
-  int refReading = analogRead(BANDGAPREF); 
-  float supplyvoltage = (bandgap_voltage * 1024) / refReading; 
-  
-  logfile.print(", ");
-  logfile.print(supplyvoltage);
-#if ECHO_TO_SERIAL
-  Serial.print(", ");   
-  Serial.print(supplyvoltage);
-#endif // ECHO_TO_SERIAL
 
   logfile.println();
 #if ECHO_TO_SERIAL
@@ -236,17 +200,24 @@ void loop(void)
   
 }
 
-  void pars_data(){
+void flow(){//reads all flows, both instantaneous and totals
 
-        total=strtok(flow_data, ",");           //let's parse the string at each comma.
-        //FPT=strtok(NULL, ",");                  //let's parse the string at each comma.
-        
+    myserial.print("R");                       //Send the command from the computer to the Atlas Scientific device using the softserial port
+    myserial.print("\r");                      //After we send the command we send a carriage return <CR>
+    delay(100);
+    
+    if (myserial.available() > 0) {                 //If data has been transmitted from an Atlas Scientific device
+      sensor_bytes_received = myserial.readBytesUntil(13, sensordata, 30); //we read the data sent from the Atlas Scientific device until we see a <CR>. We also count how many character have been received
+      sensordata[sensor_bytes_received] = 0;         //we add a 0 to the spot in the array just after the last character we received. This will stop us from transmitting incorrect data that may have been left in the buffer
+      flotot = strtok(sensordata, ",");          //Let's parse the string at each colon
+      f=atof(flotot);
+      delay(10);
+      if (myserial.available() > 0) {                 //If data has been transmitted from an Atlas Scientific device
+      int junk = myserial.readBytesUntil(13, sensordatajunk, 30);}
+      delay(10);
+    }
+}
 
-        //Serial.print("total_flow=");           //We now print each value we parsed separately. 
-        //Serial.println(total);                 //this is the total_flow. 
-     
-        //Serial.print("FPT=");                  //We now print each value we parsed separately. 
-        //Serial.println(FPT);                   //this is the the flow rate per X time.
-     
-        //Serial.println();                      //this just makes the output easier to read. 
-        }
+void voltage(){
+  
+}
