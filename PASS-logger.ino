@@ -7,13 +7,14 @@
 // A simple data logger for the Arduino analog pins
 
 // how many milliseconds between grabbing data and logging it. 1000 ms is once a second
-#define LOG_INTERVAL  5000 // mills between entries (reduce to take more/faster data)
+#define LOG_INTERVAL  10000 // mills between entries (reduce to take more/faster data)
+unsigned long previousMillis = 0;        // will store last time LED was updated
 
 // how many milliseconds before writing the logged data permanently to disk
 // set it to the LOG_INTERVAL to write each time (safest)
 // set it to 10*LOG_INTERVAL to write all data every 10 datareads, you could lose up to 
 // the last 10 reads if power is lost but it uses less power and is much faster!
-#define SYNC_INTERVAL 5000 // mills between calls to flush() - to write data to the card
+#define SYNC_INTERVAL 1000 // mills between calls to flush() - to write data to the card
 uint32_t syncTime = 0; // time of last sync()
 
 #define ECHO_TO_SERIAL   1 // echo data to serial port
@@ -45,6 +46,12 @@ char *flotot;
 
 // for the data logging shield, we use digital pin 10 for the SD cs line
 const int chipSelect = 10;
+
+int AVGcurrentAnalogReading = 0;
+int AVGvoltageAnalogReading = 0;
+unsigned long currentAnalogReadingSUM = 0;
+unsigned long voltageAnalogReadingSUM = 0;
+unsigned long readingCount = 0;
 
 // the logging file
 File logfile;
@@ -85,28 +92,8 @@ void setup(void)
   if (!SD.begin(chipSelect)) {
     error("Card failed, or not present");
   }
-  Serial.println("card initialized.");
   
-  // create a new file
-  char filename[] = "LOGGER00.CSV";
-  for (uint8_t i = 0; i < 100; i++) {
-    filename[6] = i/10 + '0';
-    filename[7] = i%10 + '0';
-    if (! SD.exists(filename)) {
-      // only open a new file if it doesn't exist
-      logfile = SD.open(filename, FILE_WRITE); 
-      break;  // leave the loop!
-    }
-  }
-  
-  if (! logfile) {
-    error("couldnt create file");
-  }
-  
-  Serial.print("Logging to: ");
-  Serial.println(filename);
-
-  // connect to RTC
+    // connect to RTC
   Wire.begin();  
   if (!RTC.begin()) {
     logfile.println("RTC failed");
@@ -115,70 +102,106 @@ void setup(void)
 #endif  //ECHO_TO_SERIAL
   }
   
-
-  logfile.println("unixtime,total,us,current,voltage");    
-#if ECHO_TO_SERIAL
-  Serial.println("unixtime,total,us,current,voltage");
-#endif //ECHO_TO_SERIAL
- 
   // If you want to set the aref to something other than 5v
   analogReference(EXTERNAL);
 }
 
-void loop(void)
-{
-  DateTime now;
+void loop(void) {
 
-  // delay for the amount of time we want between readings
-  delay((LOG_INTERVAL -1) - (millis() % LOG_INTERVAL));
+ 
   
-  digitalWrite(greenLEDpin, HIGH);
-
-  // fetch the time
-  now = RTC.now();
-  // log time
-  logfile.print(now.unixtime()); // seconds since 1/1/1970
-  logfile.print(", ");
-
-#if ECHO_TO_SERIAL
-  Serial.print(now.unixtime()); // seconds since 1/1/1970
-  Serial.print(", ");
-
-#endif //ECHO_TO_SERIAL
-  
-  //read every second and average over minute
   analogRead(currentAnalog); 
   delay(10);
-  int currentAnalogReading = analogRead(currentAnalog);    
-
-  //read every second and average over minute
+  currentAnalogReadingSUM += analogRead(currentAnalog);
+  delay(10);
   analogRead(voltageAnalog); 
   delay(10);
-  int voltageAnalogReading = analogRead(voltageAnalog); 
+  voltageAnalogReadingSUM += analogRead(voltageAnalog);
+  delay(10);
+  ++readingCount;
+  delay(1000); 
+  
+  unsigned long currentMillis = millis();
 
-  //read once per minute
-  analogRead(usAnalog);
-  delay(10); 
-  int usAnalogReading = analogRead(usAnalog);  
+  if (currentMillis - previousMillis >= LOG_INTERVAL) {
+    previousMillis = currentMillis;
+        Serial.println("card initialized.");
+  
+  // create a filename
+  DateTime now;
+  now = RTC.now();
+  int YR = now.year();
+  String YRs = String(YR,DEC);
+  int MO = now.month();
+  String MOs = String(MO,DEC);
+  int DY = now.day();
+  String DYs = String(DY,DEC);
+  String DATE = YRs + MOs + DYs;
+  
+  
+  String filename = DATE + ".CSV";
+    if (SD.exists(filename)) {
+      // open existing file
+      logfile = SD.open(filename, FILE_WRITE); 
+      #if ECHO_TO_SERIAL
+      Serial.println("File already exists, opening...");
+      #endif //ECHO_TO_SERIAL
+    }   
+    
+    if (! SD.exists(filename)) {
+      // only open a new file if it doesn't exist
+      logfile = SD.open(filename, FILE_WRITE); 
+      logfile.println("unixtime,total,us,current,voltage");    
+      #if ECHO_TO_SERIAL
+      Serial.println("Creating new file!");
+      Serial.println("unixtime,total,us,current,voltage,n");
+      #endif //ECHO_TO_SERIAL
+    }
+  
+  Serial.print("Logging to: ");
+  Serial.println(filename);
+    
+    // fetch the time
+    now = RTC.now();
+    // log time
+    logfile.print(now.unixtime()); // seconds since 1/1/1970
+    logfile.print(", ");
+  
+    #if ECHO_TO_SERIAL
+      Serial.print(now.unixtime()); // seconds since 1/1/1970
+      Serial.print(", ");
 
-  flow();
-  delay(100);
+    #endif //ECHO_TO_SERIAL
+      //Average repetative current and voltage readings between sampling interval
+      AVGcurrentAnalogReading = currentAnalogReadingSUM / readingCount;
+      AVGvoltageAnalogReading = voltageAnalogReadingSUM / readingCount;       
+        
+      //read tank level once per sampling interval
+      analogRead(usAnalog);
+      delay(10); 
+      int usAnalogReading = analogRead(usAnalog);  
+      
+      //read total flow once per sampling interval
+      flow();
+      delay(100);
     
   logfile.print(f);
   logfile.print(", ");
   logfile.print(usAnalogReading);
   logfile.print(", ");    
-  logfile.print(currentAnalogReading);
+  logfile.print(AVGcurrentAnalogReading);
   logfile.print(", ");    
-  logfile.print(voltageAnalogReading);
+  logfile.print(AVGvoltageAnalogReading);
 #if ECHO_TO_SERIAL
   Serial.print(f);
   Serial.print(", ");
   Serial.print(usAnalogReading);
   Serial.print(", ");    
-  Serial.print(currentAnalogReading);
+  Serial.print(AVGcurrentAnalogReading);
   Serial.print(", ");    
-  Serial.print(voltageAnalogReading);
+  Serial.print(AVGvoltageAnalogReading);
+  Serial.print(", ");    
+  Serial.print(readingCount);
 #endif //ECHO_TO_SERIAL
 
   logfile.println();
@@ -197,7 +220,20 @@ void loop(void)
   digitalWrite(redLEDpin, HIGH);
   logfile.flush();
   digitalWrite(redLEDpin, LOW);
+
+  //reset averaging tools if interval is met
+  readingCount=0; 
+  AVGcurrentAnalogReading = 0;
+  AVGvoltageAnalogReading = 0;
+  currentAnalogReadingSUM = 0;
+  voltageAnalogReadingSUM = 0;
+  }
+  // delay for the amount of time we want between readings
+  //delay((LOG_INTERVAL -1) - (millis() % LOG_INTERVAL));
   
+  digitalWrite(greenLEDpin, HIGH);
+
+
 }
 
 void flow(){//reads all flows, both instantaneous and totals
@@ -216,8 +252,4 @@ void flow(){//reads all flows, both instantaneous and totals
       int junk = myserial.readBytesUntil(13, sensordatajunk, 30);}
       delay(10);
     }
-}
-
-void voltage(){
-  
 }
