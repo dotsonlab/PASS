@@ -25,9 +25,9 @@ uint32_t syncTime = 0; // time of last sync()
 #define greenLEDpin 5 //optional LED spot L2 --- not wired
 
 // The analog pins that connect to the sensors
-#define usAnalog 0           // analog 0
-#define currentAnalog 1      // analog 1
-#define voltageAnalog 2      // analog 2
+#define usAnalog A0           // analog 0
+#define currentAnalog A1      // analog 1
+#define voltageAnalog A2      // analog 2
 
 // The analog pins that connect to the flow meter
 #define rx 2                     //define what pin rx is going to be.
@@ -103,18 +103,15 @@ void setup(void)
   }
   
   // If you want to set the aref to something other than 5v
-  analogReference(EXTERNAL);
+  //analogReference(EXTERNAL);
 }
 
-void loop(void) {
-
- 
-  
+void loop(void) {  
   analogRead(currentAnalog); 
   delay(10);
   currentAnalogReadingSUM += analogRead(currentAnalog);
   delay(10);
-  analogRead(voltageAnalog); 
+  analogRead(voltageAnalog);
   delay(10);
   voltageAnalogReadingSUM += analogRead(voltageAnalog);
   delay(10);
@@ -150,6 +147,7 @@ void loop(void) {
     
     if (! SD.exists(filename)) {
       // only open a new file if it doesn't exist
+      
       logfile = SD.open(filename, FILE_WRITE); 
       logfile.println("unixtime,total,us,current,voltage");    
       #if ECHO_TO_SERIAL
@@ -174,12 +172,14 @@ void loop(void) {
     #endif //ECHO_TO_SERIAL
       //Average repetative current and voltage readings between sampling interval
       AVGcurrentAnalogReading = currentAnalogReadingSUM / readingCount;
-      AVGvoltageAnalogReading = voltageAnalogReadingSUM / readingCount;       
-        
+      AVGvoltageAnalogReading = voltageAnalogReadingSUM / readingCount;
+      float AVF = AVGvoltageAnalogReading / 6.82;    
+      float ACF = AVGcurrentAnalogReading / 102.94;
       //read tank level once per sampling interval
       analogRead(usAnalog);
       delay(10); 
-      int usAnalogReading = analogRead(usAnalog);  
+      int usAnalogReading = analogRead(usAnalog);
+      float USF = usAnalogReading * 0.0267 - 5.31;  
       
       //read total flow once per sampling interval
       flow();
@@ -187,19 +187,19 @@ void loop(void) {
     
   logfile.print(f);
   logfile.print(", ");
-  logfile.print(usAnalogReading);
+  logfile.print(USF);
   logfile.print(", ");    
-  logfile.print(AVGcurrentAnalogReading);
+  logfile.print(ACF);
   logfile.print(", ");    
-  logfile.print(AVGvoltageAnalogReading);
+  logfile.print(AVF);
 #if ECHO_TO_SERIAL
   Serial.print(f);
   Serial.print(", ");
-  Serial.print(usAnalogReading);
+  Serial.print(USF);
   Serial.print(", ");    
-  Serial.print(AVGcurrentAnalogReading);
+  Serial.print(ACF);
   Serial.print(", ");    
-  Serial.print(AVGvoltageAnalogReading);
+  Serial.print(AVF);
   Serial.print(", ");    
   Serial.print(readingCount);
 #endif //ECHO_TO_SERIAL
