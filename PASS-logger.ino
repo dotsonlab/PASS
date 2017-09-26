@@ -132,6 +132,7 @@ void loop(void) {
   int MO = now.month();
   String MOs = String(MO,DEC);
   int DY = now.day();
+  //int DY = now.minute();  //testing clear command
   String DYs = String(DY,DEC);
   String DATE = YRs + MOs + DYs;
   
@@ -148,6 +149,9 @@ void loop(void) {
     if (! SD.exists(filename)) {
       // only open a new file if it doesn't exist
       
+      //myserial.print("Clear");              //Send the command from the computer to the Atlas Scientific device using the softserial port
+      //myserial.print("\r");                 //After we send the command we send a carriage return <CR>
+      //delay(100);
       logfile = SD.open(filename, FILE_WRITE); 
       logfile.println("unixtime,total,us,current,voltage");    
       #if ECHO_TO_SERIAL
